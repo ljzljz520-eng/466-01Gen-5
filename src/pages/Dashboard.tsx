@@ -1,4 +1,5 @@
 import { usePharmacyStore } from '@/store/usePharmacyStore'
+import { usePermissions } from '@/hooks/usePermissions'
 import { Link } from 'react-router-dom'
 import {
   Bell, PackageOpen, CalendarCheck, ClipboardList,
@@ -8,16 +9,82 @@ import StatCard from '@/components/StatCard'
 import { DISEASE_LABELS, INSURANCE_LABELS, REMINDER_STATUS_LABELS, SHORTAGE_STATUS_LABELS } from '@/types'
 
 export default function Dashboard() {
-  const { prescriptions, patients, drugs, reminders, getUrgentReminders, getTodayPickups, getActiveShortages } = usePharmacyStore()
+  const { can } = usePermissions()
+
+  const patients = usePharmacyStore((s) => s.patients)
+  const drugs = usePharmacyStore((s) => s.drugs)
+  const prescriptions = usePharmacyStore((s) => s.prescriptions)
+  const loading = usePharmacyStore((s) => s.loading)
+  const getUrgentReminders = usePharmacyStore((s) => s.getUrgentReminders)
+  const getTodayPickups = usePharmacyStore((s) => s.getTodayPickups)
+  const getActiveShortages = usePharmacyStore((s) => s.getActiveShortages)
+  const getPendingReminders = usePharmacyStore((s) => s.getPendingReminders)
 
   const urgentReminders = getUrgentReminders()
   const todayPickups = getTodayPickups()
   const activeShortages = getActiveShortages()
-  const pendingCount = reminders.filter((r) => r.status === 'pending').length
+  const pendingCount = getPendingReminders().length
   const activePrescriptions = prescriptions.filter((p) => p.status === 'active')
 
   const patientMap = Object.fromEntries(patients.map((p) => [p.id, p]))
   const drugMap = Object.fromEntries(drugs.map((d) => [d.id, d]))
+
+  if (loading.global) {
+    return (
+      <div className="p-6 lg:p-8 max-w-7xl mx-auto">
+        <div className="mb-6">
+          <div className="h-8 w-40 bg-slate-200 rounded animate-pulse mb-2" />
+          <div className="h-4 w-60 bg-slate-100 rounded animate-pulse" />
+        </div>
+
+        <div className="grid grid-cols-4 gap-4 mb-6">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="bg-white rounded-xl border border-slate-200 p-5 animate-pulse">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="h-4 w-24 bg-slate-200 rounded mb-2" />
+                  <div className="h-8 w-16 bg-slate-200 rounded mb-2" />
+                  <div className="h-3 w-28 bg-slate-100 rounded" />
+                </div>
+                <div className="w-10 h-10 bg-slate-100 rounded-lg" />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div className="col-span-2 space-y-4">
+            {[0, 1].map((i) => (
+              <div key={i} className="bg-white rounded-xl border border-slate-200 shadow-sm animate-pulse">
+                <div className="px-5 py-4 border-b border-slate-100">
+                  <div className="h-5 w-32 bg-slate-200 rounded" />
+                </div>
+                <div className="p-5 space-y-3">
+                  {[0, 1, 2].map((j) => (
+                    <div key={j} className="h-16 bg-slate-100 rounded" />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="space-y-4">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="bg-white rounded-xl border border-slate-200 shadow-sm animate-pulse">
+                <div className="px-5 py-4 border-b border-slate-100">
+                  <div className="h-5 w-28 bg-slate-200 rounded" />
+                </div>
+                <div className="p-4 space-y-2">
+                  {[0, 1].map((j) => (
+                    <div key={j} className="h-12 bg-slate-100 rounded" />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">
@@ -66,9 +133,11 @@ export default function Dashboard() {
                 <Bell className="w-4 h-4 text-amber-500" />
                 续方提醒
               </h2>
-              <Link to="/reminders" className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1">
-                查看全部 <ChevronRight className="w-3 h-3" />
-              </Link>
+              {can('reminder:view') && (
+                <Link to="/reminders" className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1">
+                  查看全部 <ChevronRight className="w-3 h-3" />
+                </Link>
+              )}
             </div>
             <div className="divide-y divide-slate-50">
               {urgentReminders.slice(0, 5).map((r) => {
@@ -90,7 +159,7 @@ export default function Dashboard() {
                       <p className="text-xs text-slate-400 mt-0.5 truncate">{r.message}</p>
                     </div>
                     <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${
-                      r.status === 'pending' ? 'bg-amber-50 text-amber-600' : 'bg-sky-50 text-sky-600'
+                      (r.status === 'pending' || r.status === 'failed') ? 'bg-amber-50 text-amber-600' : 'bg-sky-50 text-sky-600'
                     }`}>
                       {REMINDER_STATUS_LABELS[r.status]}
                     </span>
@@ -109,9 +178,11 @@ export default function Dashboard() {
                 <PackageOpen className="w-4 h-4 text-rose-500" />
                 缺货预警
               </h2>
-              <Link to="/shortage" className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1">
-                缺货管理 <ChevronRight className="w-3 h-3" />
-              </Link>
+              {can('shortage:view') && (
+                <Link to="/shortage" className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1">
+                  缺货管理 <ChevronRight className="w-3 h-3" />
+                </Link>
+              )}
             </div>
             <div className="divide-y divide-slate-50">
               {activeShortages.map((s) => {
@@ -167,12 +238,14 @@ export default function Dashboard() {
                           <p className="text-sm font-medium text-slate-700">{patient?.name}</p>
                           <p className="text-xs text-slate-400">{rx.items.length}种药品 · {INSURANCE_LABELS[rx.insuranceType]}</p>
                         </div>
-                        <Link
-                          to={`/prescriptions/${rx.id}`}
-                          className="text-teal-600 hover:text-teal-700"
-                        >
-                          <ArrowRight className="w-4 h-4" />
-                        </Link>
+                        {can('prescription:view') && (
+                          <Link
+                            to={`/prescriptions/${rx.id}`}
+                            className="text-teal-600 hover:text-teal-700"
+                          >
+                            <ArrowRight className="w-4 h-4" />
+                          </Link>
+                        )}
                       </div>
                     )
                   })}
@@ -216,15 +289,17 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-teal-50 to-teal-100/50 rounded-xl border border-teal-200 p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Pill className="w-5 h-5 text-teal-600" />
-              <span className="text-sm font-semibold text-teal-800">药品库存</span>
+          {can('inventory:view') && (
+            <div className="bg-gradient-to-br from-teal-50 to-teal-100/50 rounded-xl border border-teal-200 p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Pill className="w-5 h-5 text-teal-600" />
+                <span className="text-sm font-semibold text-teal-800">药品库存</span>
+              </div>
+              <div className="text-xs text-teal-600">
+                共 {drugs.length} 种药品 · {drugs.filter((d) => d.stock > 0).length} 种有库存 · {drugs.filter((d) => d.stock === 0).length} 种缺货
+              </div>
             </div>
-            <div className="text-xs text-teal-600">
-              共 {drugs.length} 种药品 · {drugs.filter((d) => d.stock > 0).length} 种有库存 · {drugs.filter((d) => d.stock === 0).length} 种缺货
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

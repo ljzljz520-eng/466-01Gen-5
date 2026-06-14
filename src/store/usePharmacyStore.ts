@@ -1,145 +1,111 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 import type {
-  Patient, Drug, Prescription, PrescriptionItem,
-  ShortageRecord, SubstituteRecord, Reminder,
+  User, Patient, Drug, Prescription, PrescriptionItem,
+  ShortageRecord, SubstituteRecord, Reminder, AuditLog,
+  PermissionType,
 } from '@/types'
+import { hasPermission } from '@/types'
+import {
+  authApi, patientApi, drugApi, prescriptionApi, shortageApi,
+  reminderApi, waitQueueApi, auditApi, stockApi, notificationApi,
+} from '@/services/mockApi'
+import { db } from '@/services/mockDatabase'
+import { broadcastSync } from '@/services/broadcastSync'
+import type { SyncMessage } from '@/services/broadcastSync'
+import { useToastStore } from '@/store/useToastStore'
 
-function genId() {
-  return Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
+interface LoadingState {
+  auth: boolean
+  patients: boolean
+  drugs: boolean
+  prescriptions: boolean
+  shortages: boolean
+  reminders: boolean
+  audit: boolean
+  stock: boolean
+  queue: boolean
+  notifications: boolean
+  global: boolean
 }
 
-function daysFromNow(d: number): string {
-  const dt = new Date()
-  dt.setDate(dt.getDate() + d)
-  return dt.toISOString().slice(0, 10)
+interface ToastShowFn {
+  (type: 'success' | 'error' | 'warning' | 'info', message: string): void
 }
 
-const MOCK_PATIENTS: Patient[] = [
-  { id: 'p1', name: '王建国', idCard: '310101195503124512', phone: '13801234567', diseaseType: 'hypertension' },
-  { id: 'p2', name: '李秀英', idCard: '310102196207086734', phone: '13901234568', diseaseType: 'diabetes' },
-  { id: 'p3', name: '张伟明', idCard: '310103194812251234', phone: '13701234569', diseaseType: 'both' },
-  { id: 'p4', name: '陈桂芳', idCard: '310104195607153456', phone: '13601234570', diseaseType: 'hypertension' },
-  { id: 'p5', name: '刘德全', idCard: '310105196310097890', phone: '13501234571', diseaseType: 'diabetes' },
-  { id: 'p6', name: '赵美玲', idCard: '310106195904212345', phone: '13401234572', diseaseType: 'both' },
-  { id: 'p7', name: '孙志强', idCard: '310107194706183456', phone: '13301234573', diseaseType: 'hypertension' },
-  { id: 'p8', name: '周凤兰', idCard: '310108196501075678', phone: '13201234574', diseaseType: 'diabetes' },
-]
+const showToast: ToastShowFn = (type, message) => {
+  const toast = useToastStore.getState()
+  toast.show(type, message)
+}
 
-const MOCK_DRUGS: Drug[] = [
-  { id: 'd1', name: '苯磺酸氨氯地平片', specification: '5mg×28片', category: 'hypertension', stock: 120, unit: '盒' },
-  { id: 'd2', name: '缬沙坦胶囊', specification: '80mg×7粒', category: 'hypertension', stock: 0, unit: '盒' },
-  { id: 'd3', name: '硝苯地平控释片', specification: '30mg×7片', category: 'hypertension', stock: 85, unit: '盒' },
-  { id: 'd4', name: '盐酸二甲双胍片', specification: '0.5g×20片', category: 'diabetes', stock: 200, unit: '盒' },
-  { id: 'd5', name: '格列美脲片', specification: '2mg×30片', category: 'diabetes', stock: 0, unit: '盒' },
-  { id: 'd6', name: '阿卡波糖片', specification: '50mg×30片', category: 'diabetes', stock: 60, unit: '盒' },
-  { id: 'd7', name: '厄贝沙坦片', specification: '150mg×7片', category: 'hypertension', stock: 45, unit: '盒' },
-  { id: 'd8', name: '瑞格列奈片', specification: '1mg×30片', category: 'diabetes', stock: 30, unit: '盒' },
-  { id: 'd9', name: '复方利血平片', specification: '100片', category: 'hypertension', stock: 150, unit: '瓶' },
-  { id: 'd10', name: '恩替卡韦分散片', specification: '0.5mg×7片', category: 'cardiovascular', stock: 80, unit: '盒' },
-]
-
-const MOCK_PRESCRIPTIONS: Prescription[] = [
-  {
-    id: 'rx1', patientId: 'p1', insuranceType: 'urban_employee', remainingDays: 5,
-    pickupDate: daysFromNow(0), status: 'active', createdAt: daysFromNow(-25),
-    items: [
-      { id: 'ri1', prescriptionId: 'rx1', drugId: 'd1', quantity: 4, dosage: '每日1次，每次1片', remainingQuantity: 5 },
-      { id: 'ri2', prescriptionId: 'rx1', drugId: 'd7', quantity: 4, dosage: '每日1次，每次1片', remainingQuantity: 5 },
-    ],
-  },
-  {
-    id: 'rx2', patientId: 'p2', insuranceType: 'urban_resident', remainingDays: 2,
-    pickupDate: daysFromNow(1), status: 'active', createdAt: daysFromNow(-28),
-    items: [
-      { id: 'ri3', prescriptionId: 'rx2', drugId: 'd4', quantity: 3, dosage: '每日2次，每次1片', remainingQuantity: 4 },
-      { id: 'ri4', prescriptionId: 'rx2', drugId: 'd6', quantity: 3, dosage: '每日3次，每次1片', remainingQuantity: 9 },
-    ],
-  },
-  {
-    id: 'rx3', patientId: 'p3', insuranceType: 'rural_coop', remainingDays: 12,
-    pickupDate: daysFromNow(5), status: 'active', createdAt: daysFromNow(-18),
-    items: [
-      { id: 'ri5', prescriptionId: 'rx3', drugId: 'd1', quantity: 4, dosage: '每日1次，每次1片', remainingQuantity: 12 },
-      { id: 'ri6', prescriptionId: 'rx3', drugId: 'd4', quantity: 3, dosage: '每日2次，每次1片', remainingQuantity: 12 },
-    ],
-  },
-  {
-    id: 'rx4', patientId: 'p4', insuranceType: 'urban_employee', remainingDays: 1,
-    pickupDate: daysFromNow(0), status: 'active', createdAt: daysFromNow(-29),
-    items: [
-      { id: 'ri7', prescriptionId: 'rx4', drugId: 'd3', quantity: 4, dosage: '每日1次，每次1片', remainingQuantity: 1 },
-    ],
-  },
-  {
-    id: 'rx5', patientId: 'p5', insuranceType: 'self_pay', remainingDays: 20,
-    pickupDate: daysFromNow(8), status: 'active', createdAt: daysFromNow(-10),
-    items: [
-      { id: 'ri8', prescriptionId: 'rx5', drugId: 'd4', quantity: 3, dosage: '每日2次，每次1片', remainingQuantity: 20 },
-      { id: 'ri9', prescriptionId: 'rx5', drugId: 'd8', quantity: 3, dosage: '每日3次，每次1片', remainingQuantity: 20 },
-    ],
-  },
-  {
-    id: 'rx6', patientId: 'p6', insuranceType: 'urban_resident', remainingDays: 8,
-    pickupDate: daysFromNow(3), status: 'active', createdAt: daysFromNow(-22),
-    items: [
-      { id: 'ri10', prescriptionId: 'rx6', drugId: 'd3', quantity: 4, dosage: '每日1次，每次1片', remainingQuantity: 8 },
-      { id: 'ri11', prescriptionId: 'rx6', drugId: 'd6', quantity: 3, dosage: '每日3次，每次1片', remainingQuantity: 8 },
-    ],
-  },
-]
-
-const MOCK_SHORTAGES: ShortageRecord[] = [
-  {
-    id: 's1', drugId: 'd2', shortageQuantity: 50, estimatedArrivalDate: daysFromNow(3),
-    status: 'shortage', createdAt: daysFromNow(-2),
-    substitutes: [
-      { id: 'sub1', shortageId: 's1', substituteDrugId: 'd7', reason: '同为ARB类降压药，作用机制相似', status: 'active', patientIds: ['p1'] },
-    ],
-  },
-  {
-    id: 's2', drugId: 'd5', shortageQuantity: 30, estimatedArrivalDate: daysFromNow(5),
-    status: 'substituted', createdAt: daysFromNow(-4),
-    substitutes: [
-      { id: 'sub2', shortageId: 's2', substituteDrugId: 'd8', reason: '同为促胰岛素分泌剂，可替代使用', status: 'active', patientIds: ['p2', 'p5'] },
-    ],
-  },
-]
-
-const MOCK_REMINDERS: Reminder[] = [
-  { id: 'rm1', patientId: 'p1', prescriptionId: 'rx1', type: 'renewal_7d', remindDate: daysFromNow(-2), status: 'sent', message: '王建国的高血压处方将在5天后到期，请尽快联系患者续方' },
-  { id: 'rm2', patientId: 'p1', prescriptionId: 'rx1', type: 'renewal_3d', remindDate: daysFromNow(2), status: 'pending', message: '王建国的高血压处方将在2天后到期，请立即联系患者续方' },
-  { id: 'rm3', patientId: 'p2', prescriptionId: 'rx2', type: 'renewal_3d', remindDate: daysFromNow(-1), status: 'sent', message: '李秀英的糖尿病处方将在2天后到期，请尽快联系患者续方' },
-  { id: 'rm4', patientId: 'p2', prescriptionId: 'rx2', type: 'renewal_1d', remindDate: daysFromNow(0), status: 'pending', message: '李秀英的糖尿病处方明天到期，请立即联系患者续方！' },
-  { id: 'rm5', patientId: 'p4', prescriptionId: 'rx4', type: 'renewal_1d', remindDate: daysFromNow(0), status: 'pending', message: '陈桂芳的高血压处方今天到期，请立即联系患者续方！' },
-  { id: 'rm6', patientId: 'p1', prescriptionId: 'rx1', type: 'substitute_notice', remindDate: daysFromNow(-1), status: 'sent', message: '缬沙坦胶囊缺货，建议替换为厄贝沙坦片，已通知患者王建国' },
-  { id: 'rm7', patientId: 'p3', prescriptionId: 'rx3', type: 'renewal_7d', remindDate: daysFromNow(5), status: 'pending', message: '张伟明的处方将在7天后到期，请提前联系患者续方' },
-  { id: 'rm8', patientId: 'p6', prescriptionId: 'rx6', type: 'renewal_7d', remindDate: daysFromNow(1), status: 'pending', message: '赵美玲的处方将在5天后到期，请尽快联系患者续方' },
-]
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
 
 interface PharmacyState {
+  // ===== 数据 =====
+  initialized: boolean
+  currentUser: User | null
   patients: Patient[]
   drugs: Drug[]
   prescriptions: Prescription[]
   shortages: ShortageRecord[]
   reminders: Reminder[]
+  auditLogs: AuditLog[]
+  notifications: Awaited<ReturnType<typeof notificationApi.list>>
+  waitQueue: Awaited<ReturnType<typeof waitQueueApi.list>>
+  stockChanges: Awaited<ReturnType<typeof stockApi.listChanges>>
 
-  addPatient: (patient: Omit<Patient, 'id'>) => string
-  updatePatient: (id: string, data: Partial<Patient>) => void
+  loading: LoadingState
 
-  addPrescription: (rx: Omit<Prescription, 'id' | 'items' | 'createdAt'> & { items: Omit<PrescriptionItem, 'id' | 'prescriptionId'>[] }) => string
-  updatePrescription: (id: string, data: Partial<Prescription>) => void
+  // ===== 初始化和同步 =====
+  init: () => Promise<void>
+  loadAll: () => Promise<void>
+  loadPatients: () => Promise<void>
+  loadDrugs: () => Promise<void>
+  loadPrescriptions: () => Promise<void>
+  loadShortages: () => Promise<void>
+  loadReminders: () => Promise<void>
+  loadAuditLogs: () => Promise<void>
+  loadNotifications: () => Promise<void>
+  loadWaitQueue: () => Promise<void>
+  loadStockChanges: () => Promise<void>
+  showToast: ToastShowFn
 
-  addShortage: (s: Omit<ShortageRecord, 'id' | 'substitutes' | 'createdAt'>) => string
-  addSubstitute: (shortageId: string, sub: Omit<SubstituteRecord, 'id' | 'shortageId'>) => void
-  restockShortage: (shortageId: string) => void
+  // ===== 权限 =====
+  hasPermission: (p: PermissionType) => boolean
+  requirePermission: (p: PermissionType) => void
 
-  addReminder: (r: Omit<Reminder, 'id'>) => string
-  updateReminder: (id: string, data: Partial<Reminder>) => void
-  markReminderSent: (id: string) => void
-  markReminderConfirmed: (id: string) => void
-  markReminderIgnored: (id: string) => void
+  // ===== 认证 =====
+  login: (username: string, password: string) => Promise<User>
+  logout: () => Promise<void>
+  restoreSession: () => Promise<User | null>
 
+  // ===== 患者 =====
+  addPatient: (data: Omit<Patient, 'id' | 'createdAt'>) => Promise<string>
+  updatePatient: (id: string, data: Partial<Patient>) => Promise<void>
+
+  // ===== 库存 =====
+  adjustStock: (id: string, delta: number, reason: Parameters<typeof drugApi.adjustStock>[2], refId?: string, notes?: string) => Promise<void>
+
+  // ===== 处方 =====
+  addPrescription: (data: Omit<Prescription, 'id' | 'createdAt' | 'updatedAt' | 'items' | 'registeredBy'> & { items: Omit<PrescriptionItem, 'id' | 'prescriptionId'>[] }) => Promise<string>
+  updatePrescription: (id: string, data: Partial<Prescription>) => Promise<void>
+  completePrescription: (id: string) => Promise<void>
+
+  // ===== 缺货 =====
+  addShortage: (data: Omit<ShortageRecord, 'id' | 'substitutes' | 'createdAt' | 'registeredBy'>) => Promise<string>
+  addSubstitute: (shortageId: string, sub: Omit<SubstituteRecord, 'id' | 'shortageId' | 'createdAt' | 'registeredBy'>) => Promise<void>
+  restockShortage: (shortageId: string) => Promise<void>
+
+  // ===== 提醒 =====
+  sendReminder: (id: string) => Promise<void>
+  confirmReminder: (id: string) => Promise<void>
+  ignoreReminder: (id: string) => Promise<void>
+
+  // ===== 系统 =====
+  resetAllData: () => Promise<void>
+
+  // ===== 派生查询 =====
   getPatient: (id: string) => Patient | undefined
   getDrug: (id: string) => Drug | undefined
   getPrescriptionsByPatient: (patientId: string) => Prescription[]
@@ -148,172 +114,348 @@ interface PharmacyState {
   getTodayPickups: () => Prescription[]
   getUrgentReminders: () => Reminder[]
   getActiveShortages: () => ShortageRecord[]
+  getPendingReminders: () => Reminder[]
 }
 
-export const usePharmacyStore = create<PharmacyState>()(
-  persist(
-    (set, get) => ({
-      patients: MOCK_PATIENTS,
-      drugs: MOCK_DRUGS,
-      prescriptions: MOCK_PRESCRIPTIONS,
-      shortages: MOCK_SHORTAGES,
-      reminders: MOCK_REMINDERS,
+const initialLoading: LoadingState = {
+  auth: false,
+  patients: false,
+  drugs: false,
+  prescriptions: false,
+  shortages: false,
+  reminders: false,
+  audit: false,
+  stock: false,
+  queue: false,
+  notifications: false,
+  global: false,
+}
 
-      addPatient: (data) => {
-        const id = genId()
-        set((s) => ({ patients: [...s.patients, { ...data, id }] }))
-        return id
-      },
-      updatePatient: (id, data) => {
-        set((s) => ({
-          patients: s.patients.map((p) => (p.id === id ? { ...p, ...data } : p)),
-        }))
-      },
+export const usePharmacyStore = create<PharmacyState>((set, get) => ({
+  initialized: false,
+  currentUser: null,
+  patients: [],
+  drugs: [],
+  prescriptions: [],
+  shortages: [],
+  reminders: [],
+  auditLogs: [],
+  notifications: [],
+  waitQueue: [],
+  stockChanges: [],
+  loading: { ...initialLoading },
+  showToast,
 
-      addPrescription: (data) => {
-        const id = genId()
-        const items: PrescriptionItem[] = data.items.map((item) => ({
-          ...item,
-          id: genId(),
-          prescriptionId: id,
-        }))
-        set((s) => ({
-          prescriptions: [...s.prescriptions, { ...data, id, items, createdAt: new Date().toISOString().slice(0, 10) }],
-        }))
+  hasPermission: (p) => {
+    const u = get().currentUser
+    if (!u) return false
+    return hasPermission(u.role, p)
+  },
+  requirePermission: (p) => {
+    if (!get().hasPermission(p)) {
+      const u = get().currentUser
+      throw new Error(u ? `无操作权限：${p}` : '请先登录')
+    }
+  },
 
-        const remainingDays = data.remainingDays
-        if (remainingDays <= 7) {
-          const patient = get().patients.find((p) => p.id === data.patientId)
-          const type7 = remainingDays <= 7 ? 'renewal_7d' as const : null
-          const type3 = remainingDays <= 3 ? 'renewal_3d' as const : null
-          const type1 = remainingDays <= 1 ? 'renewal_1d' as const : null
-          const types = [type7, type3, type1].filter(Boolean) as Array<'renewal_7d' | 'renewal_3d' | 'renewal_1d'>
-          const msgs: Record<string, string> = {
-            renewal_7d: `${patient?.name || '患者'}的处方将在7天内到期，请提前联系续方`,
-            renewal_3d: `${patient?.name || '患者'}的处方将在3天内到期，请尽快联系续方`,
-            renewal_1d: `${patient?.name || '患者'}的处方即将到期，请立即联系续方！`,
-          }
-          types.forEach((t) => {
-            const remindDate = daysFromNow(remainingDays - (t === 'renewal_7d' ? 7 : t === 'renewal_3d' ? 3 : 1))
-            set((s) => ({
-              reminders: [...s.reminders, {
-                id: genId(),
-                patientId: data.patientId,
-                prescriptionId: id,
-                type: t,
-                remindDate,
-                status: 'pending',
-                message: msgs[t],
-              }],
-            }))
-          })
-        }
-        return id
-      },
-      updatePrescription: (id, data) => {
-        set((s) => ({
-          prescriptions: s.prescriptions.map((p) => (p.id === id ? { ...p, ...data } : p)),
-        }))
-      },
+  // ===== 初始化 =====
+  init: async () => {
+    broadcastSync.connect()
+    broadcastSync.subscribe((msg: SyncMessage) => {
+      if (msg.action === 'data:updated' || msg.action === 'data:reset') {
+        setTimeout(() => get().loadAll(), 200)
+      }
+      if (msg.action === 'user:login' && get().currentUser) {
+        broadcastSync.broadcast('user:logout')
+        set({ currentUser: null })
+        showToast('warning', '账号在其他窗口登录，当前已退出')
+      }
+    })
+    await db.init()
+    const user = await get().restoreSession()
+    if (user) {
+      await get().loadAll()
+    }
+    set({ initialized: true })
+  },
 
-      addShortage: (data) => {
-        const id = genId()
-        set((s) => ({
-          shortages: [...s.shortages, { ...data, id, substitutes: [], createdAt: new Date().toISOString().slice(0, 10) }],
-        }))
-        set((s) => ({
-          drugs: s.drugs.map((d) => (d.id === data.drugId ? { ...d, stock: 0 } : d)),
-        }))
-        return id
-      },
-      addSubstitute: (shortageId, sub) => {
-        const newSub: SubstituteRecord = { ...sub, id: genId(), shortageId }
-        set((s) => ({
-          shortages: s.shortages.map((sh) =>
-            sh.id === shortageId ? { ...sh, substitutes: [...sh.substitutes, newSub], status: 'substituted' as const } : sh
-          ),
-        }))
-      },
-      restockShortage: (shortageId) => {
-        const shortage = get().shortages.find((s) => s.id === shortageId)
-        if (!shortage) return
-        set((s) => ({
-          shortages: s.shortages.map((sh) =>
-            sh.id === shortageId ? { ...sh, status: 'restocked' as const } : sh
-          ),
-        }))
-        set((s) => ({
-          drugs: s.drugs.map((d) => {
-            if (d.id === shortage.drugId) {
-              return { ...d, stock: d.stock + shortage.shortageQuantity }
-            }
-            return d
-          }),
-        }))
-        const drug = get().getDrug(shortage.drugId)
-        const affectedPatients = new Set<string>()
-        shortage.substitutes.forEach((sub) => {
-          sub.patientIds.forEach((pid) => affectedPatients.add(pid))
-        })
-        affectedPatients.forEach((pid) => {
-          const patient = get().getPatient(pid)
-          set((s) => ({
-            reminders: [...s.reminders, {
-              id: genId(),
-              patientId: pid,
-              prescriptionId: '',
-              type: 'shortage_arrival' as const,
-              remindDate: new Date().toISOString().slice(0, 10),
-              status: 'pending' as const,
-              message: `${drug?.name || '药品'}已到货，请通知患者${patient?.name || ''}前来取药`,
-            }],
-          }))
-        })
-      },
+  loadAll: async () => {
+    set((s) => ({ loading: { ...s.loading, global: true } }))
+    try {
+      await Promise.all([
+        get().loadPatients(),
+        get().loadDrugs(),
+        get().loadPrescriptions(),
+        get().loadShortages(),
+        get().loadReminders(),
+        get().loadWaitQueue(),
+        get().loadNotifications(),
+      ])
+    } finally {
+      set((s) => ({ loading: { ...s.loading, global: false } }))
+    }
+  },
 
-      addReminder: (data) => {
-        const id = genId()
-        set((s) => ({ reminders: [...s.reminders, { ...data, id }] }))
-        return id
-      },
-      updateReminder: (id, data) => {
-        set((s) => ({
-          reminders: s.reminders.map((r) => (r.id === id ? { ...r, ...data } : r)),
-        }))
-      },
-      markReminderSent: (id) => {
-        set((s) => ({
-          reminders: s.reminders.map((r) => (r.id === id ? { ...r, status: 'sent' as const } : r)),
-        }))
-      },
-      markReminderConfirmed: (id) => {
-        set((s) => ({
-          reminders: s.reminders.map((r) => (r.id === id ? { ...r, status: 'confirmed' as const } : r)),
-        }))
-      },
-      markReminderIgnored: (id) => {
-        set((s) => ({
-          reminders: s.reminders.map((r) => (r.id === id ? { ...r, status: 'ignored' as const } : r)),
-        }))
-      },
+  loadPatients: async () => {
+    set((s) => ({ loading: { ...s.loading, patients: true } }))
+    try {
+      const list = await patientApi.list()
+      set({ patients: list })
+    } catch {
+      /* ignore 权限错误 */
+    } finally {
+      set((s) => ({ loading: { ...s.loading, patients: false } }))
+    }
+  },
+  loadDrugs: async () => {
+    set((s) => ({ loading: { ...s.loading, drugs: true } }))
+    try {
+      const list = await drugApi.list()
+      set({ drugs: list })
+    } finally {
+      set((s) => ({ loading: { ...s.loading, drugs: false } }))
+    }
+  },
+  loadPrescriptions: async () => {
+    set((s) => ({ loading: { ...s.loading, prescriptions: true } }))
+    try {
+      const list = await prescriptionApi.list()
+      set({ prescriptions: list })
+    } catch {
+      /* ignore */
+    } finally {
+      set((s) => ({ loading: { ...s.loading, prescriptions: false } }))
+    }
+  },
+  loadShortages: async () => {
+    set((s) => ({ loading: { ...s.loading, shortages: true } }))
+    try {
+      const list = await shortageApi.list()
+      set({ shortages: list })
+    } catch {
+      /* ignore */
+    } finally {
+      set((s) => ({ loading: { ...s.loading, shortages: false } }))
+    }
+  },
+  loadReminders: async () => {
+    set((s) => ({ loading: { ...s.loading, reminders: true } }))
+    try {
+      const list = await reminderApi.list()
+      set({ reminders: list })
+    } catch {
+      /* ignore */
+    } finally {
+      set((s) => ({ loading: { ...s.loading, reminders: false } }))
+    }
+  },
+  loadAuditLogs: async () => {
+    set((s) => ({ loading: { ...s.loading, audit: true } }))
+    try {
+      const list = await auditApi.list()
+      set({ auditLogs: list })
+    } catch {
+      /* ignore */
+    } finally {
+      set((s) => ({ loading: { ...s.loading, audit: false } }))
+    }
+  },
+  loadNotifications: async () => {
+    set((s) => ({ loading: { ...s.loading, notifications: true } }))
+    try {
+      const list = await notificationApi.list()
+      set({ notifications: list })
+    } catch {
+      /* ignore */
+    } finally {
+      set((s) => ({ loading: { ...s.loading, notifications: false } }))
+    }
+  },
+  loadWaitQueue: async () => {
+    set((s) => ({ loading: { ...s.loading, queue: true } }))
+    try {
+      const list = await waitQueueApi.list()
+      set({ waitQueue: list })
+    } catch {
+      /* ignore */
+    } finally {
+      set((s) => ({ loading: { ...s.loading, queue: false } }))
+    }
+  },
+  loadStockChanges: async () => {
+    set((s) => ({ loading: { ...s.loading, stock: true } }))
+    try {
+      const list = await stockApi.listChanges()
+      set({ stockChanges: list })
+    } catch {
+      /* ignore */
+    } finally {
+      set((s) => ({ loading: { ...s.loading, stock: false } }))
+    }
+  },
 
-      getPatient: (id) => get().patients.find((p) => p.id === id),
-      getDrug: (id) => get().drugs.find((d) => d.id === id),
-      getPrescriptionsByPatient: (patientId) => get().prescriptions.filter((p) => p.patientId === patientId),
-      getPatientReminders: (patientId) => get().reminders.filter((r) => r.patientId === patientId),
-      getShortagesByDrug: (drugId) => get().shortages.filter((s) => s.drugId === drugId),
-      getTodayPickups: () => {
-        const today = new Date().toISOString().slice(0, 10)
-        return get().prescriptions.filter((p) => p.pickupDate === today && p.status === 'active')
-      },
-      getUrgentReminders: () => {
-        const today = new Date().toISOString().slice(0, 10)
-        return get().reminders
-          .filter((r) => r.status === 'pending' && r.remindDate <= today)
-          .sort((a, b) => a.remindDate.localeCompare(b.remindDate))
-      },
-      getActiveShortages: () => get().shortages.filter((s) => s.status !== 'restocked'),
-    }),
-    { name: 'pharmacy-store' }
-  )
-)
+  // ===== 认证 =====
+  login: async (username, password) => {
+    set((s) => ({ loading: { ...s.loading, auth: true } }))
+    try {
+      const u = await authApi.login(username, password)
+      set({ currentUser: u })
+      broadcastSync.broadcast('user:login')
+      await get().loadAll()
+      showToast('success', `欢迎回来，${u.name}！`)
+      return u
+    } catch (e) {
+      showToast('error', e instanceof Error ? e.message : '登录失败')
+      throw e
+    } finally {
+      set((s) => ({ loading: { ...s.loading, auth: false } }))
+    }
+  },
+
+  logout: async () => {
+    try {
+      await authApi.logout()
+      set({ currentUser: null })
+      broadcastSync.broadcast('user:logout')
+      showToast('info', '已安全退出系统')
+    } catch (e) {
+      showToast('error', e instanceof Error ? e.message : '退出失败')
+    }
+  },
+
+  restoreSession: async () => {
+    set((s) => ({ loading: { ...s.loading, auth: true } }))
+    try {
+      const u = await authApi.restoreSession()
+      if (u) set({ currentUser: u })
+      return u
+    } finally {
+      set((s) => ({ loading: { ...s.loading, auth: false } }))
+    }
+  },
+
+  // ===== 患者 =====
+  addPatient: async (data) => {
+    const p = await patientApi.create(data)
+    await get().loadPatients()
+    broadcastSync.broadcast('data:updated')
+    showToast('success', `已添加患者：${p.name}`)
+    return p.id
+  },
+  updatePatient: async (id, data) => {
+    await patientApi.update(id, data)
+    await get().loadPatients()
+    broadcastSync.broadcast('data:updated')
+    showToast('success', '患者信息已更新')
+  },
+
+  // ===== 库存 =====
+  adjustStock: async (id, delta, reason, refId, notes) => {
+    await drugApi.adjustStock(id, delta, reason, refId, notes)
+    await get().loadDrugs()
+    await get().loadStockChanges()
+    broadcastSync.broadcast('data:updated')
+  },
+
+  // ===== 处方 =====
+  addPrescription: async (data) => {
+    const rx = await prescriptionApi.create(data)
+    await Promise.all([get().loadPrescriptions(), get().loadDrugs(), get().loadReminders(), get().loadStockChanges()])
+    broadcastSync.broadcast('data:updated')
+    showToast('success', `处方${rx.id}已登记，已扣减库存并生成续方提醒`)
+    return rx.id
+  },
+  updatePrescription: async (id, data) => {
+    await prescriptionApi.update(id, data)
+    await get().loadPrescriptions()
+    broadcastSync.broadcast('data:updated')
+    showToast('success', '处方已更新')
+  },
+  completePrescription: async (id) => {
+    await get().updatePrescription(id, { status: 'completed' as const })
+    showToast('success', '处方已标记完成')
+  },
+
+  // ===== 缺货 =====
+  addShortage: async (data) => {
+    const s = await shortageApi.register(data)
+    await Promise.all([get().loadShortages(), get().loadDrugs(), get().loadWaitQueue(), get().loadStockChanges()])
+    broadcastSync.broadcast('data:updated')
+    const d = get().getDrug(data.drugId)
+    showToast('warning', `已登记缺货：${d?.name || '药品'}，已加入${get().waitQueue.filter((w) => w.shortageId === s.id).length}位患者等待队列`)
+    return s.id
+  },
+  addSubstitute: async (shortageId, sub) => {
+    await shortageApi.addSubstitute(shortageId, sub)
+    await Promise.all([get().loadShortages(), get().loadReminders()])
+    broadcastSync.broadcast('data:updated')
+    showToast('success', `已登记替代方案，已通知${sub.patientIds.length}位患者`)
+  },
+  restockShortage: async (shortageId) => {
+    const before = get().shortages.find((s) => s.id === shortageId)
+    await shortageApi.restock(shortageId)
+    await Promise.all([get().loadShortages(), get().loadDrugs(), get().loadReminders(), get().loadWaitQueue(), get().loadStockChanges()])
+    broadcastSync.broadcast('data:updated')
+    const d = before ? get().getDrug(before.drugId) : null
+    showToast('success', `${d?.name || '药品'}已到货入库，已发送${before?.shortageQuantity || ''}份到货通知`)
+  },
+
+  // ===== 提醒 =====
+  sendReminder: async (id) => {
+    set((s) => ({ loading: { ...s.loading, reminders: true } }))
+    try {
+      const r = await reminderApi.send(id)
+      await Promise.all([get().loadReminders(), get().loadNotifications()])
+      broadcastSync.broadcast('data:updated')
+      if (r.status === 'sent') {
+        showToast('success', '提醒已发送')
+      } else if (r.status === 'failed') {
+        showToast('error', '提醒发送失败，请稍后重试')
+      }
+    } catch (e) {
+      showToast('error', e instanceof Error ? e.message : '发送失败')
+    } finally {
+      set((s) => ({ loading: { ...s.loading, reminders: false } }))
+    }
+  },
+  confirmReminder: async (id) => {
+    await reminderApi.confirm(id)
+    await get().loadReminders()
+    broadcastSync.broadcast('data:updated')
+    showToast('success', '已确认回执')
+  },
+  ignoreReminder: async (id) => {
+    await reminderApi.ignore(id)
+    await get().loadReminders()
+    broadcastSync.broadcast('data:updated')
+    showToast('info', '已忽略该提醒')
+  },
+
+  // ===== 系统 =====
+  resetAllData: async () => {
+    get().requirePermission('system:manage')
+    await db.reset()
+    broadcastSync.broadcast('data:reset')
+    await get().loadAll()
+    showToast('success', '系统数据已重置为初始状态')
+  },
+
+  // ===== 查询 =====
+  getPatient: (id) => get().patients.find((p) => p.id === id),
+  getDrug: (id) => get().drugs.find((d) => d.id === id),
+  getPrescriptionsByPatient: (patientId) => get().prescriptions.filter((p) => p.patientId === patientId),
+  getPatientReminders: (patientId) => get().reminders.filter((r) => r.patientId === patientId),
+  getShortagesByDrug: (drugId) => get().shortages.filter((s) => s.drugId === drugId),
+  getTodayPickups: () => {
+    const t = today()
+    return get().prescriptions.filter((p) => p.pickupDate === t && p.status === 'active')
+  },
+  getUrgentReminders: () => {
+    const t = today()
+    return get().reminders
+      .filter((r) => (r.status === 'pending' || r.status === 'failed') && r.remindDate <= t)
+      .sort((a, b) => a.remindDate.localeCompare(b.remindDate))
+  },
+  getActiveShortages: () => get().shortages.filter((s) => s.status !== 'restocked'),
+  getPendingReminders: () => get().reminders.filter((r) => r.status === 'pending' || r.status === 'failed'),
+}))

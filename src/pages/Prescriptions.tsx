@@ -1,4 +1,5 @@
 import { usePharmacyStore } from '@/store/usePharmacyStore'
+import { usePermissions } from '@/hooks/usePermissions'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Search, Filter, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
@@ -6,12 +7,18 @@ import { DISEASE_LABELS, INSURANCE_LABELS, PRESCRIPTION_STATUS_LABELS } from '@/
 import type { DiseaseType, InsuranceType } from '@/types'
 
 export default function Prescriptions() {
-  const { prescriptions, patients } = usePharmacyStore()
+  const { can } = usePermissions()
+  const { prescriptions, patients, loading } = usePharmacyStore((s) => ({
+    prescriptions: s.prescriptions,
+    patients: s.patients,
+    loading: s.loading,
+  }))
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [filterDisease, setFilterDisease] = useState<DiseaseType | ''>('')
   const [filterInsurance, setFilterInsurance] = useState<InsuranceType | ''>('')
   const [showFilters, setShowFilters] = useState(false)
+  const isLoading = loading.prescriptions || loading.global
 
   const patientMap = Object.fromEntries(patients.map((p) => [p.id, p]))
 
@@ -31,13 +38,15 @@ export default function Prescriptions() {
           <h1 className="text-2xl font-bold text-slate-800">处方登记</h1>
           <p className="text-sm text-slate-400 mt-1">管理所有慢病处方信息</p>
         </div>
-        <button
-          onClick={() => navigate('/prescriptions/new')}
-          className="flex items-center gap-2 bg-teal-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-teal-700 transition-colors shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          新增处方
-        </button>
+        {can('prescription:create') && (
+          <button
+            onClick={() => navigate('/prescriptions/new')}
+            className="flex items-center gap-2 bg-teal-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-teal-700 transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            新增处方
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
@@ -90,20 +99,30 @@ export default function Prescriptions() {
         </div>
 
         <div className="divide-y divide-slate-50">
-          {filtered.length === 0 && (
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <div className="flex items-center gap-3">
+                <div className="w-5 h-5 border-2 border-teal-600/30 border-t-teal-600 rounded-full animate-spin" />
+                <span className="text-slate-500">加载中...</span>
+              </div>
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="py-16 text-center text-sm text-slate-400">暂无处方记录</div>
-          )}
-          {filtered.map((rx) => {
-            const patient = patientMap[rx.patientId]
-            if (!patient) return null
-            const statusColor = rx.status === 'active' ? 'bg-teal-50 text-teal-700' : rx.status === 'completed' ? 'bg-slate-50 text-slate-500' : 'bg-rose-50 text-rose-600'
-            const remainingColor = rx.remainingDays <= 3 ? 'text-rose-600' : rx.remainingDays <= 7 ? 'text-amber-600' : 'text-teal-600'
-            return (
-              <div
-                key={rx.id}
-                onClick={() => navigate(`/prescriptions/${rx.id}`)}
-                className="flex items-center gap-4 px-5 py-4 hover:bg-slate-25 transition-colors cursor-pointer group"
-              >
+          ) : (
+            filtered.map((rx) => {
+              const patient = patientMap[rx.patientId]
+              if (!patient) return null
+              const statusColor = rx.status === 'active' ? 'bg-teal-50 text-teal-700' : rx.status === 'completed' ? 'bg-slate-50 text-slate-500' : 'bg-rose-50 text-rose-600'
+              const remainingColor = rx.remainingDays <= 3 ? 'text-rose-600' : rx.remainingDays <= 7 ? 'text-amber-600' : 'text-teal-600'
+              const canView = can('prescription:view')
+              return (
+                <div
+                  key={rx.id}
+                  onClick={() => {
+                    if (canView) navigate(`/prescriptions/${rx.id}`)
+                  }}
+                  className={`flex items-center gap-4 px-5 py-4 transition-colors group ${canView ? 'hover:bg-slate-25 cursor-pointer' : 'cursor-default'}`}
+                >
                 <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-sm font-semibold text-slate-600 shrink-0">
                   {patient.name.slice(-1)}
                 </div>
@@ -134,7 +153,8 @@ export default function Prescriptions() {
                 </div>
               </div>
             )
-          })}
+          })
+          )}
         </div>
       </div>
     </div>
